@@ -1,0 +1,33 @@
+# ================================================================
+# Unsloth GUI - macOS MPS/MLX 依赖（Apple Silicon / Intel Mac）
+# ================================================================
+# 推荐后端优先级：mlx-tune > hf_mps > hf_cpu
+# mlx-tune 使用 Apple Silicon 原生 MLX 框架，无需 bitsandbytes。
+# ================================================================
+
+# GUI 框架
+gradio>=6.0.0
+
+# 机器学习核心（从 PyTorch 官网安装 MPS 支持版本）
+# pip install torch torchvision torchaudio
+torch>=2.1.0
+transformers>=4.40.0
+datasets>=2.19.0
+accelerate>=1.0.0
+peft>=0.10.0
+trl>=0.8.6
+
+# Apple Silicon 原生训练后端（推荐，macOS 最优方案）
+mlx-tune>=0.4.0
+# mlx 和 mlx-lm 会随 mlx-tune 自动安装
+
+# 图表
+plotly>=5.0.0
+
+# 贝叶斯超参数优化（自动调参 Tab）
+optuna>=3.6.0
+
+# 其他工具
+packaging
+sentencepiece
+protobuf

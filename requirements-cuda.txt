@@ -1,0 +1,34 @@
+# ================================================================
+# Unsloth GUI - CUDA 依赖（Linux / Windows，NVIDIA GPU）
+# ================================================================
+
+# GUI 框架
+gradio>=6.0.0
+
+# 机器学习核心
+torch>=2.1.0
+transformers>=4.40.0
+datasets>=2.19.0
+accelerate>=0.28.0
+peft>=0.10.0
+trl>=0.8.6
+
+# Unsloth（CUDA 最优方案）
+# 安装时根据 CUDA 版本选择对应包：
+# CUDA 12.1: pip install "unsloth[cu121-torch240] @ git+https://github.com/unslothai/unsloth.git"
+# 或直接：
+unsloth
+
+# 量化
+bitsandbytes>=0.43.0
+
+# 图表
+plotly>=5.0.0
+
+# 贝叶斯超参数优化（自动调参 Tab）
+optuna>=3.6.0
+
+# 其他工具
+packaging
+sentencepiece
+protobuf
