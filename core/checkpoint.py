@@ -89,26 +89,63 @@ def scan_checkpoints(output_dir: str) -> List[CheckpointInfo]:
 
 
 def load_checkpoint_config(ckpt_path: str) -> Optional[dict]:
-    """Read adapter_config.json from a checkpoint to extract LoRA config."""
-    # For HF checkpoint dirs
-    adapter_cfg_path = os.path.join(ckpt_path, "adapter_config.json")
-    if os.path.isfile(adapter_cfg_path):
-        try:
-            with open(adapter_cfg_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
+    """
+    Read LoRA config from a checkpoint.
 
-    # For MLX single-file checkpoints, look for adapter_config.json in same dir
-    if os.path.isfile(ckpt_path):
+    Search order:
+    1. adapter_config.json in the checkpoint dir (HF PEFT format)
+    2. adapter_config.json in the parent dir (MLX single-file checkpoints)
+    3. training_config.json in the checkpoint dir (auto-saved by this app)
+    4. training_config.json in the parent dir
+    5. training_config.json in the grandparent dir (per-session subdir layout)
+
+    Returns a dict with at least the keys used by configs_compatible():
+      r, lora_alpha, target_modules, base_model_name_or_path
+    The dict also carries a "_source" key ("adapter_config" or "training_config")
+    so callers can show the user where the config came from.
+    """
+    search_dirs = []
+
+    if os.path.isdir(ckpt_path):
+        search_dirs.append(ckpt_path)
+        search_dirs.append(os.path.dirname(ckpt_path))
+        search_dirs.append(os.path.dirname(os.path.dirname(ckpt_path)))
+    elif os.path.isfile(ckpt_path):
         parent = os.path.dirname(ckpt_path)
-        adapter_cfg_path = os.path.join(parent, "adapter_config.json")
-        if os.path.isfile(adapter_cfg_path):
+        search_dirs.append(parent)
+        search_dirs.append(os.path.dirname(parent))
+        search_dirs.append(os.path.dirname(os.path.dirname(parent)))
+
+    # 1 & 2: adapter_config.json (authoritative PEFT format)
+    for d in search_dirs:
+        p = os.path.join(d, "adapter_config.json")
+        if os.path.isfile(p):
             try:
-                with open(adapter_cfg_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                with open(p, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                cfg["_source"] = "adapter_config"
+                return cfg
             except Exception:
-                return None
+                pass
+
+    # 3, 4, 5: training_config.json (saved by this app alongside every checkpoint)
+    for d in search_dirs:
+        p = os.path.join(d, "training_config.json")
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    tc = json.load(f)
+                # Normalise to adapter_config field names so configs_compatible() works unchanged
+                cfg = {
+                    "r": tc.get("lora_r"),
+                    "lora_alpha": tc.get("lora_alpha"),
+                    "target_modules": tc.get("target_modules"),
+                    "base_model_name_or_path": tc.get("model_id", ""),
+                    "_source": "training_config",
+                }
+                return cfg
+            except Exception:
+                pass
 
     return None
 

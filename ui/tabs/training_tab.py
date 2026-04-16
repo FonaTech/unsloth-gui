@@ -4,6 +4,7 @@ Tab 5: Training monitor — start/stop, live loss curve, log stream, progress & 
 Uses Gradio Generator mode for real-time updates (no gr.Timer needed).
 """
 
+import os
 import time
 import gradio as gr
 
@@ -124,11 +125,14 @@ def build_training_tab(
                 return ""
             cfg = load_checkpoint_config(ckpt_path)
             if cfg is None:
-                return "⚠️ Cannot read adapter config"
+                return "⚠️ No adapter_config.json or training_config.json found near this checkpoint"
+            source = cfg.get("_source", "adapter_config")
+            source_label = "adapter_config.json" if source == "adapter_config" else "training_config.json"
             model_id = (model_info or {}).get("model_id", "")
             modules = list(target_modules) if target_modules else []
             ok, reason = configs_compatible(cfg, model_id, int(lora_r), int(lora_alpha), modules)
-            return f"✅ {reason}" if ok else f"❌ {reason}"
+            prefix = f"✅ {reason}" if ok else f"❌ {reason}"
+            return f"{prefix}  (source: {source_label})"
 
         resume_scan_btn.click(
             fn=on_resume_scan,
@@ -211,6 +215,13 @@ def build_training_tab(
                 report_to=str(report_to),
                 resume_from_checkpoint=(resume_ckpt if resume_on and resume_ckpt else ""),
             )
+
+            # In per_session mode, isolate output to a session-specific subdirectory
+            # so concurrent sessions don't overwrite each other's checkpoints.
+            if session_manager.mode == "per_session" and session_id != "__singleton__":
+                import re as _re
+                safe_id = _re.sub(r"[^a-zA-Z0-9_-]", "_", session_id)[:32]
+                cfg.output_dir = os.path.join(cfg.output_dir, safe_id)
 
             # Request training slot (may queue)
             slot = session_manager.request_training(session_id)

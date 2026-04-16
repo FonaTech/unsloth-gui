@@ -95,9 +95,11 @@ class TrainingConfig:
 class MetricsCallback:
     """HuggingFace TrainerCallback，将指标推送到 TrainingMonitor。"""
 
-    def __init__(self, monitor: TrainingMonitor, stop_event: threading.Event):
+    def __init__(self, monitor: TrainingMonitor, stop_event: threading.Event,
+                 config: "TrainingConfig" = None):
         self.monitor = monitor
         self.stop_event = stop_event
+        self._config = config
         self._start_time = time.time()
         self._last_step_time = time.time()
 
@@ -108,6 +110,7 @@ class MetricsCallback:
         monitor = self.monitor
         stop_event = self.stop_event
         start_time = self._start_time
+        config = self._config
 
         class _CB(TrainerCallback):
             def on_log(self, args, state, control, logs=None, **kwargs):
@@ -150,6 +153,14 @@ class MetricsCallback:
             def on_save(self, args, state, control, **kwargs):
                 ckpt = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
                 monitor.put({"type": "checkpoint", "path": ckpt})
+                # Auto-save training_config.json alongside the checkpoint
+                if config is not None:
+                    try:
+                        cfg_path = os.path.join(ckpt, "training_config.json")
+                        with open(cfg_path, "w", encoding="utf-8") as f:
+                            json.dump(config.to_dict(), f, indent=2, ensure_ascii=False)
+                    except Exception:
+                        pass
 
             def on_train_end(self, args, state, control, **kwargs):
                 monitor.put({"type": "status", "status": "finished",
@@ -248,7 +259,16 @@ class TrainingOrchestrator:
             self.monitor.put({"type": "log", "line": "Model loaded. Starting training..."})
             self.monitor.put({"type": "status", "status": "running"})
 
-            callback = MetricsCallback(self.monitor, self._stop_event)
+            # Save training_config.json to output root so checkpoint resume can find it
+            try:
+                os.makedirs(config.output_dir, exist_ok=True)
+                cfg_root_path = os.path.join(config.output_dir, "training_config.json")
+                with open(cfg_root_path, "w", encoding="utf-8") as f:
+                    json.dump(config.to_dict(), f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+            callback = MetricsCallback(self.monitor, self._stop_event, config)
             trainer = self._build_trainer(
                 config, backend, model, tokenizer,
                 train_dataset, eval_dataset, callback, total_steps
