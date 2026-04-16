@@ -1,74 +1,130 @@
 # Unsloth GUI Fine-Tuning Workbench
 
-`unsloth-gui` is a local visual fine-tuning tool for LLM adaptation workflows. It wraps common single-machine training flows into one Gradio web UI and can route across:
+`unsloth-gui` is a local, single-machine visual fine-tuning workbench for large language models. It provides a Gradio-based web interface that unifies dataset preparation, model selection, LoRA configuration, training monitoring, checkpoint management, model export, and Bayesian hyperparameter search into one cohesive workflow.
 
-- `Unsloth + CUDA`
-- `MLX-Tune + Apple Silicon`
-- `Hugging Face + CUDA / MPS / CPU`
+The project is designed for researchers and practitioners who want to run fine-tuning experiments locally without writing training scripts from scratch. It routes automatically to the best available backend on the current hardware.
 
-The project focuses on practical local workflows:
+---
 
-- Dataset loading and preview
-- Base model selection
-- LoRA / SFT / DPO / ORPO configuration
-- Live training monitoring
-- Export to LoRA / merged model / GGUF
-- Optuna-based hyperparameter search
+## Supported Backends
 
-## Status
+| Backend | Platform | Notes |
+|---------|----------|-------|
+| Unsloth + CUDA | Linux / Windows (NVIDIA GPU) | Fastest path; requires `unsloth` package |
+| MLX-Tune + Apple Silicon | macOS M-series (M1/M2/M3/M4) | Native Metal GPU; requires `mlx-tune` |
+| Hugging Face + CUDA | Linux / Windows (NVIDIA GPU) | Fallback when Unsloth is unavailable |
+| Hugging Face + MPS | macOS Apple Silicon | PyTorch MPS backend |
+| Hugging Face + CPU | Any platform | Debugging and very small experiments only |
 
-This repository is under active refinement.
+Backend selection is automatic at startup based on detected hardware and installed packages.
 
-Current state in this version:
+---
 
-- Unified layout and reduced tab width jitter
-- Improved visual shell and top-level UI styling
-- Initial multilingual foundation for `简体中文 / 繁體中文 / English / 日本語`
-- Parameter-facing input components are being migrated to Gradio i18n markers
-- Core training / export / tuning logic remains local-first and mostly unchanged
+## Features
 
-Important note:
+### Dataset
+- Loads `.jsonl`, `.json`, and `.csv` files
+- Supports SFT format (`instruction` / `input` / `output` / `system`) and preference format (`prompt` / `chosen` / `rejected`)
+- Configurable train/eval split ratio
+- Prompt template selection: Alpaca, ChatML, Llama 3
+- `<think>` block handling: keep or strip chain-of-thought reasoning blocks
+- Dataset statistics, field validation, and formatted prompt preview
 
-- Static UI labels, placeholders, and many parameter hints are now connected to the multilingual layer.
-- Some runtime-generated backend messages are still primarily Chinese and should be migrated further if you want fully localized status outputs.
+### Model Selection
+- Built-in catalog of 17+ models (Llama 3, Qwen 2.5, Mistral, Gemma 2, Phi-4, DeepSeek)
+- Custom HuggingFace model ID input
+- Local model path with automatic directory scan
+- VRAM compatibility check against detected GPU memory
+
+### Training Configuration
+- LoRA hyperparameters: rank, alpha, dropout, target modules, RSLoRA
+- Training type: SFT, DPO, ORPO
+- Optimizer, scheduler, learning rate, warmup, weight decay, gradient clipping
+- Memory optimization: 4-bit quantization, gradient checkpointing, sequence packing, NEFTune
+- Save/load configuration as JSON
+- Quick presets: Quick Test, Memory Efficient, Balanced, High Quality
+
+### Training Monitor
+- Real-time status, progress bar, ETA
+- Live loss and learning rate plots
+- GPU memory usage and training speed
+- Full training log stream
+- Checkpoint list
+- Checkpoint resume: scan existing checkpoints, verify config compatibility, resume from any step
+- Session reconnect: page refresh reconnects to a running training session without interruption
+
+### Export
+- Save LoRA adapter weights
+- Save merged full-precision model (fp16)
+- Export GGUF with configurable quantization level
+- Push to HuggingFace Hub
+- Quick inference test against the loaded model
+
+### Auto-Tune
+- Optuna TPE Bayesian optimization
+- Configurable search space: LoRA rank, learning rate, batch size, warmup ratio, scheduler, gradient accumulation
+- Trial history table and convergence plot
+- Parameter importance analysis (FAnova)
+- Apply best parameters back to the main training configuration
+
+### Multilingual UI
+- Languages: Simplified Chinese, Traditional Chinese, English (default), Japanese
+- All labels, choices, section headers, status messages, and error strings are translated
+- Language preference persisted in `localStorage`; restored on page reload
+- Pure Python `gr.update()` switching — no dependency on Gradio's internal i18n system
+
+### Color Themes
+- Six built-in themes: Ocean Blue, Forest Green, Amber Sand, Rose Clay, Indigo Mist, Slate Mono
+- CSS variable switching; theme preference persisted in `localStorage`
+
+### Multi-User and Session Management
+- **Single-user mode** (default): all sessions share one training instance — suitable for personal local use
+- **Per-session mode**: each browser tab receives an independent monitor, orchestrator, and auto-tuner instance
+- **Task queue**: when running jobs reach the configured maximum, new training requests queue automatically and start when a slot opens
+- **GPU release**: on training completion, model references are deleted and GPU/Metal cache is cleared to free memory for the next session
+- **Admin panel**: visible only to localhost users; controls mode toggle and max concurrent jobs
+- **Session status bar**: shows online sessions, active training count, and queue depth
+
+### Network Access
+- Binds to `0.0.0.0` by default — accessible from both `http://localhost:7860` and the local network IP
+- Browser opens automatically to `http://localhost:7860`
+- Both URLs printed at startup
+
+---
 
 ## Requirements
 
-### CUDA / NVIDIA
-
-- Python 3.9+
-- PyTorch with CUDA support
-- Recommended: `Unsloth`
-
-Install:
-
-```bash
-pip install -r requirements-cuda.txt
-```
-
-If needed, install an Unsloth build matching your CUDA / torch version.
+Python 3.9 or later is required for all configurations.
 
 ### macOS / Apple Silicon
 
-- Python 3.9+
-- PyTorch with MPS support
-- Recommended: `mlx-tune`
-
-Install:
+Recommended for M1/M2/M3/M4 machines. Uses MLX-Tune for native Metal GPU training.
 
 ```bash
 pip install -r requirements-mps.txt
 ```
 
-### CPU fallback
+### CUDA / NVIDIA GPU
 
-Install:
+Recommended for Linux and Windows with NVIDIA hardware. Installs Unsloth for the fastest training path.
+
+```bash
+pip install -r requirements-cuda.txt
+```
+
+If your CUDA or PyTorch version requires a specific Unsloth build, follow the [Unsloth installation guide](https://github.com/unslothai/unsloth#installation) and install the matching wheel separately.
+
+### CPU Fallback
+
+For debugging, testing, or machines without a supported GPU.
 
 ```bash
 pip install -r requirements-cpu.txt
 ```
 
-CPU training is only for debugging or very small experiments.
+CPU training is extremely slow for any model larger than a few hundred million parameters. It is not recommended for real fine-tuning runs.
+
+---
 
 ## Launch
 
@@ -76,126 +132,114 @@ CPU training is only for debugging or very small experiments.
 python app.py
 ```
 
-Options:
+### Command-Line Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--port PORT` | `7860` | HTTP server port |
+| `--host HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` to restrict to localhost only |
+| `--no-browser` | off | Suppress automatic browser launch |
+| `--share` | off | Create a temporary public Gradio share URL |
+
+### Example
 
 ```bash
-python app.py --host 0.0.0.0 --port 7860
+# LAN-accessible, no browser
 python app.py --no-browser
-python app.py --share
+
+# Localhost only
+python app.py --host 127.0.0.1
+
+# Custom port
+python app.py --port 8080
 ```
 
-## Feature Overview
+---
 
-### 1. Environment Detection
+## Project Structure
 
-- Detects CUDA / MPS / MLX / CPU
-- Shows package versions and install suggestions
+```
+app.py                          Entry point and CLI argument handling
+core/
+  trainer.py                    Training orchestration: Unsloth / MLX / HF backends
+  monitor.py                    Thread-safe queue-based metrics collection
+  dataset.py                    Dataset loading, validation, formatting, statistics
+  environment.py                Platform and backend detection
+  checkpoint.py                 Checkpoint scanning and LoRA config compatibility check
+  session_manager.py            Session registry, isolation modes, task queue, GPU release
+  auto_tuner.py                 Optuna TPE hyperparameter search
+  exporter.py                   LoRA / merged model / GGUF export, Hub push, inference
+  model_catalog.py              Built-in model definitions and VRAM estimates
+ui/
+  app_builder.py                Gradio application assembly, admin panel, session status
+  i18n.py                       Translation dictionaries (4 languages), component registry
+  theme.py                      CSS variable themes, localStorage persistence
+  tabs/
+    env_tab.py                  Tab 1: Environment detection
+    dataset_tab.py              Tab 2: Dataset configuration
+    model_tab.py                Tab 3: Model selection
+    config_tab.py               Tab 4: Training hyperparameters and presets
+    training_tab.py             Tab 5: Training monitor, checkpoint resume, queue flow
+    export_tab.py               Tab 6: Export and quick inference
+    auto_tune_tab.py            Tab 7: Bayesian hyperparameter auto-tuning
+configs/
+  presets/
+    quick_test.json             1 epoch, 100 samples
+    memory_efficient.json       Optimized for 8 GB VRAM
+    balanced.json               Balanced for 16 GB VRAM
+    high_quality.json           High quality for 24 GB+ VRAM
+```
 
-### 2. Dataset Setup
+---
 
-- Supports `.jsonl`, `.json`, `.csv`
-- Supports SFT-style records and preference records
-- Includes split ratio, prompt template, and `<think>` block handling
+## Configuration Presets
 
-### 3. Model Selection
+Presets are stored as JSON files in `configs/presets/` and can be loaded from the Training Configuration tab. You can also save your own configuration from the UI and reload it later.
 
-- Built-in catalog
-- Hugging Face model IDs
-- Local model paths
-- Local directory scan
+---
 
-### 4. Training Configuration
+## Checkpoint Resume
 
-- LoRA settings
-- Scheduler and optimization parameters
-- Memory optimization options
-- Save / load configuration file
+The training tab includes a checkpoint resume section. To resume a previous run:
 
-### 5. Training Monitor
+1. Enter the output directory path in the scan field
+2. Click **Scan Checkpoints** — the tool detects both HuggingFace-format checkpoint directories (`checkpoint-{step}/`) and MLX adapter files (`{step}_adapters.safetensors`)
+3. Select a checkpoint from the dropdown
+4. The compatibility checker verifies that the base model, LoRA rank, alpha, and target modules match the current configuration
+5. Enable **Resume from checkpoint** and start training
 
-- Live status
-- Progress bar
-- Loss / LR plots
-- Logs and checkpoints
+---
 
-### 6. Export and Quick Inference
+## Session and Concurrency Model
 
-- Save LoRA adapter
-- Save merged model
-- Export GGUF
-- Push to Hugging Face Hub
-- Run quick prompt inference
+By default the application runs in **single-user mode**: all browser sessions share one training process. This is appropriate for personal local use.
 
-### 7. Auto Tune
+To enable multi-user isolation, open the Admin panel (visible only when accessing from `localhost`) and switch to **Per-session mode**. In this mode:
 
-- Optuna TPE search
-- Trial history
-- Parameter importance
-- Apply best parameters back to the main training config
+- Each browser tab receives its own `TrainingMonitor`, `TrainingOrchestrator`, and `AutoTuner` instance
+- Sessions do not interfere with each other
+- The **Max concurrent training jobs** slider controls how many sessions can train simultaneously
+- Sessions that exceed the limit are placed in a queue and start automatically when a slot becomes available
+- When a session finishes training, its model references are released and GPU/Metal memory is cleared before the next session starts
 
-## Multilingual UI
-
-Target languages:
-
-- Simplified Chinese
-- Traditional Chinese
-- English
-- Japanese
-
-Implementation direction:
-
-- Static labels, placeholders, help text, and option labels are being moved to a centralized translation dictionary in [`ui/i18n.py`](/Users/Fona/Downloads/Fine-Tuning/unsloth-gui/ui/i18n.py)
-- Shared styling is centralized in [`ui/theme.py`](/Users/Fona/Downloads/Fine-Tuning/unsloth-gui/ui/theme.py)
-
-If you want complete multilingual coverage, continue migrating:
-
-- Markdown section headings
-- Runtime validation messages
-- Training / export / auto-tune callback outputs
-- HTML helper cards in the model tab
+---
 
 ## License
 
-This project is licensed under the Apache License 2.0.
+This project is licensed under the **Apache License 2.0**.
 
-See:
+See [LICENSE](LICENSE) for the full license text.
 
-- [LICENSE](/Users/Fona/Downloads/Fine-Tuning/unsloth-gui/LICENSE)
-- [THIRD_PARTY_NOTICES.md](/Users/Fona/Downloads/Fine-Tuning/unsloth-gui/THIRD_PARTY_NOTICES.md)
+---
 
-## Third-Party Dependencies and References
+## Third-Party Dependencies
 
-This project depends on or references several open-source projects, including:
+This project depends on several open-source libraries. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full list of dependencies, their licenses, and attribution notes.
 
-- Unsloth
-- MLX-Tune
-- Optuna
-- Hugging Face Transformers / Datasets / PEFT / TRL / Accelerate
-- Gradio
-- bitsandbytes
-- Plotly
-- PyTorch
-- SentencePiece
+---
 
-In addition, the auto-tuning workflow and research-loop framing were influenced by:
+## Disclaimer
 
-- `karpathy/autoresearch`
+This software is provided "as is", without warranty of any kind, express or implied. The authors are not responsible for any damages, data loss, or other consequences arising from the use of this software. Fine-tuning large language models involves significant computational resources and may produce outputs that require careful evaluation before deployment.
 
-This repository does not bundle those upstream projects' source code wholesale. Their copyrights remain with their respective authors.
-
-See [THIRD_PARTY_NOTICES.md](/Users/Fona/Downloads/Fine-Tuning/unsloth-gui/THIRD_PARTY_NOTICES.md) for attribution and license notes.
-
-## Known Gaps
-
-- Full per-request runtime localization is not complete yet
-- Some UI sections still contain hard-coded Chinese Markdown and status strings
-- Browser-language selection is currently more reliable than the in-page language dropdown for complete Gradio-side translation changes
-- No automated test suite is included yet
-
-## Suggested Next Steps
-
-- Finish translating runtime callback messages
-- Move tab titles and Markdown section headers to i18n keys
-- Add screenshots / GIFs to the README
-- Add smoke tests for UI startup and key backend paths
-
+Model weights downloaded through this tool are subject to their own respective licenses. It is the user's responsibility to comply with the terms of any model license before using, distributing, or deploying fine-tuned models.

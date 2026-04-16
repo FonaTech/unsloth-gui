@@ -109,7 +109,7 @@ def build_app() -> gr.Blocks:
 
             # ── Admin panel (localhost only) ──────────────────────────
             is_admin = gr.State(False)
-            with gr.Group(visible=False) as admin_panel:
+            with gr.Column(visible=False) as admin_panel:
                 admin_title = gr.Markdown(tr("admin.title"))
                 register_translatable(admin_title, label_key="admin.title")
                 with gr.Row():
@@ -196,30 +196,31 @@ def build_app() -> gr.Blocks:
                 set_current_lang(lang)
                 label_updates = build_language_update(lang)
 
-                # Detect if request is from localhost
                 host = getattr(getattr(request, "client", None), "host", "") or ""
                 _is_admin = host in ("127.0.0.1", "::1", "localhost", "")
 
-                # Check if training is running for reconnect
                 session_id = getattr(request, "session_hash", "__singleton__")
                 state = session_manager.get_or_create(session_id)
                 is_running = state.monitor.status in ("loading", "running")
 
-                return [lang, theme, _is_admin, gr.update(visible=_is_admin), is_running] + label_updates
+                status_html = _session_status_html()
+
+                return [lang, theme, _is_admin, gr.update(visible=_is_admin), is_running, status_html] + label_updates
 
             app.load(
                 fn=_on_load,
                 inputs=[language, color_theme],
-                outputs=[language, color_theme, is_admin, admin_panel, reconnect_trigger] + _registered,
+                outputs=[language, color_theme, is_admin, admin_panel, reconnect_trigger, session_status] + _registered,
                 js=make_prefs_restore_js(DEFAULT_LANGUAGE),
                 queue=False,
             )
 
-            # ── Session status refresh (every 5s) ────────────────────
-            gr.Timer(5).tick(
-                fn=_session_status_html,
-                inputs=[],
+            # Update session status on language change too
+            language.change(
+                fn=lambda _: _session_status_html(),
+                inputs=[language],
                 outputs=[session_status],
+                queue=False,
             )
 
     return app, _LAUNCH_KWARGS
