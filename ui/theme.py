@@ -301,6 +301,8 @@ APP_CSS = (
     "#main-tabs .workspace-tab { width: 100% !important; min-width: 100% !important; box-sizing: border-box !important; min-height: var(--tab-panel-min-height); } "
     "#main-tabs .workspace-tab > .block { width: 100% !important; } "
     "#main-tabs .gradio-row, #main-tabs .gradio-column { min-width: 0 !important; } "
+    ".training-btn-row { min-height: 52px !important; } "
+    ".training-btn-row button { min-height: 42px !important; height: 42px !important; } "
     "#main-tabs .gradio-html, #main-tabs .gradio-dataframe, #main-tabs .gradio-plot, #main-tabs .gradio-lineplot, #main-tabs .gradio-barplot { width: 100% !important; } "
     "#main-tabs .block, .toolbar-cell .block { box-shadow: none !important; } "
     ".footer-note { color: var(--muted); font-size: 13px; line-height: 1.7; padding: 2px 2px 12px; } "

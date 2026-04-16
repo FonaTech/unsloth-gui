@@ -9,7 +9,7 @@ import time
 import gradio as gr
 
 from core.trainer import TrainingConfig
-from core.checkpoint import scan_checkpoints, load_checkpoint_config, configs_compatible
+from core.checkpoint import scan_checkpoints, load_checkpoint_config, configs_compatible, load_training_config_raw
 from core.session_manager import session_manager
 from ui.i18n import tr, register_translatable, t
 
@@ -25,7 +25,7 @@ def build_training_tab(
         register_translatable(title_md, label_key="training.title")
 
         # ── Control buttons (top, always visible) ───────────────────
-        with gr.Row():
+        with gr.Row(elem_classes="training-btn-row"):
             start_btn = gr.Button(tr("training.start"), variant="primary", scale=2)
             register_translatable(start_btn, label_key="training.start")
             stop_btn = gr.Button(tr("training.stop"), variant="secondary", scale=1, interactive=False)
@@ -88,14 +88,24 @@ def build_training_tab(
                 register_translatable(resume_scan_btn, label_key="training.resume.scan")
             resume_checkpoint_dd = gr.Dropdown(
                 choices=[], value=None, label=tr("training.resume.checkpoint"), interactive=True,
+                allow_custom_value=True,
             )
             register_translatable(resume_checkpoint_dd, label_key="training.resume.checkpoint")
+            # Mirror State: keeps the selected path accessible even inside a closed accordion
+            resume_ckpt_path_state = gr.State("")
             resume_compat_status = gr.Textbox(
                 value="", label=tr("training.resume.compat"), interactive=False,
             )
             register_translatable(resume_compat_status, label_key="training.resume.compat")
             resume_enabled = gr.Checkbox(value=False, label=tr("training.resume.enable"))
             register_translatable(resume_enabled, label_key="training.resume.enable")
+            with gr.Row():
+                apply_config_btn = gr.Button(tr("training.resume.apply_config"), variant="secondary")
+                register_translatable(apply_config_btn, label_key="training.resume.apply_config")
+            apply_config_status = gr.Textbox(
+                value="", label=tr("training.resume.apply_config.status"), interactive=False,
+            )
+            register_translatable(apply_config_status, label_key="training.resume.apply_config.status")
 
         # ── Config keys ──────────────────────────────────────────────
         _CONFIG_KEYS = [
@@ -141,12 +151,111 @@ def build_training_tab(
                     config_components["target_modules"]],
             outputs=[resume_checkpoint_dd, resume_compat_status],
         )
+
+        def _on_resume_dd_change(ckpt_path, model_info, lora_r, lora_alpha, target_modules):
+            """Wraps on_resume_select and also updates the mirror State."""
+            compat_text, is_ok = on_resume_select(ckpt_path, model_info, lora_r, lora_alpha, target_modules)
+            return compat_text, is_ok, ckpt_path or ""
+
         resume_checkpoint_dd.change(
-            fn=on_resume_select,
+            fn=_on_resume_dd_change,
             inputs=[resume_checkpoint_dd, model_state,
                     config_components["lora_r"], config_components["lora_alpha"],
                     config_components["target_modules"]],
-            outputs=[resume_compat_status, resume_enabled],
+            outputs=[resume_compat_status, resume_enabled, resume_ckpt_path_state],
+        )
+
+        # ── Apply config from checkpoint to UI ───────────────────────
+        _CONFIG_KEYS_FOR_APPLY = [
+            "lora_r", "lora_alpha", "lora_dropout", "use_rslora",
+            "target_modules", "training_type", "num_epochs",
+            "per_device_train_batch_size", "gradient_accumulation_steps",
+            "learning_rate", "lr_scheduler_type", "warmup_ratio",
+            "weight_decay", "max_grad_norm", "beta",
+            "load_in_4bit", "use_gradient_checkpointing", "packing",
+            "max_seq_length", "neftune_noise_alpha",
+            "output_dir", "save_steps", "save_total_limit",
+            "logging_steps", "report_to",
+        ]
+        _config_apply_outputs = [config_components[k] for k in _CONFIG_KEYS_FOR_APPLY]
+        _N_CFG = len(_CONFIG_KEYS_FOR_APPLY)
+
+        def on_apply_config(ckpt_path):
+            no_update = [gr.update()] * _N_CFG
+            if not ckpt_path:
+                return no_update + [{}, {}, t("training.resume.apply_config.no_ckpt")]
+            tc = load_training_config_raw(ckpt_path)
+            if tc is None:
+                return no_update + [{}, {}, t("training.resume.apply_config.no_cfg")]
+
+            # 25 config field values (same order as _CONFIG_KEYS_FOR_APPLY)
+            config_vals = [
+                tc.get("lora_r", 16),
+                tc.get("lora_alpha", 32),
+                tc.get("lora_dropout", 0.0),
+                tc.get("use_rslora", False),
+                tc.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj",
+                                          "gate_proj", "up_proj", "down_proj"]),
+                tc.get("training_type", "sft"),
+                tc.get("num_epochs", 3),
+                tc.get("per_device_train_batch_size", 4),
+                tc.get("gradient_accumulation_steps", 4),
+                str(tc.get("learning_rate", 2e-4)),
+                tc.get("lr_scheduler_type", "cosine"),
+                tc.get("warmup_ratio", 0.05),
+                tc.get("weight_decay", 0.01),
+                tc.get("max_grad_norm", 1.0),
+                tc.get("beta", 0.1),
+                tc.get("load_in_4bit", False),
+                tc.get("use_gradient_checkpointing", True),
+                tc.get("packing", False),
+                tc.get("max_seq_length", 2048),
+                tc.get("neftune_noise_alpha", 0),
+                tc.get("output_dir", "outputs"),
+                tc.get("save_steps", 200),
+                tc.get("save_total_limit", 3),
+                tc.get("logging_steps", 20),
+                tc.get("report_to", "none"),
+            ]
+
+            # Reconstruct model_state from training_config
+            model_id = tc.get("model_id", "")
+            new_model_state = {
+                "model_id": model_id,
+                "display_name": model_id,
+                "load_in_4bit": tc.get("load_in_4bit", False),
+                "default_target_modules": tc.get("target_modules", []),
+                "context_length": 4096,
+            } if model_id else {}
+
+            # Reconstruct dataset_state from training_config
+            dataset_path = tc.get("dataset_path", "")
+            new_dataset_state = {
+                "path": dataset_path,
+                "train_ratio": tc.get("train_ratio", 0.95),
+                "max_samples": tc.get("max_samples", 0),
+                "template": tc.get("prompt_template", "alpaca"),
+                "think_mode": tc.get("think_mode", "keep"),
+            } if dataset_path else {}
+
+            model_display = model_id or "?"
+            dataset_display = os.path.basename(dataset_path) if dataset_path else "?"
+            warn = ""
+            if dataset_path and not os.path.isfile(dataset_path):
+                warn = " " + t("training.resume.apply_config.warn_dataset")
+            status = t("training.resume.apply_config.ok").format(
+                model=model_display,
+                dataset=dataset_display,
+                r=tc.get("lora_r", "?"),
+                lr=tc.get("learning_rate", "?"),
+            ) + warn
+
+            return config_vals + [new_model_state, new_dataset_state, status]
+
+        apply_config_btn.click(
+            fn=on_apply_config,
+            inputs=[resume_ckpt_path_state],
+            outputs=_config_apply_outputs + [model_state, dataset_state, apply_config_status],
         )
 
         def start_and_stream(

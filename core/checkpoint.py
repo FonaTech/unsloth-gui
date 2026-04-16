@@ -150,6 +150,38 @@ def load_checkpoint_config(ckpt_path: str) -> Optional[dict]:
     return None
 
 
+def load_training_config_raw(ckpt_path: str) -> Optional[dict]:
+    """
+    Search for and return the raw training_config.json near a checkpoint path.
+    Returns the full dict as saved by the trainer (all 24+ TrainingConfig fields).
+    Returns None if not found.
+    """
+    search_dirs = []
+    if os.path.isdir(ckpt_path):
+        search_dirs.extend([
+            ckpt_path,
+            os.path.dirname(ckpt_path),
+            os.path.dirname(os.path.dirname(ckpt_path)),
+        ])
+    elif os.path.isfile(ckpt_path):
+        parent = os.path.dirname(ckpt_path)
+        search_dirs.extend([
+            parent,
+            os.path.dirname(parent),
+            os.path.dirname(os.path.dirname(parent)),
+        ])
+
+    for d in search_dirs:
+        p = os.path.join(d, "training_config.json")
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return None
+
+
 def configs_compatible(ckpt_config: dict, model_id: str, lora_r: int,
                        lora_alpha: int, target_modules: list) -> Tuple[bool, str]:
     """
