@@ -356,13 +356,26 @@ class TrainingOrchestrator:
             ) if eval_recs else None
         else:
             # DPO / ORPO: 保持原始字段 (prompt, chosen, rejected)
+            # Validate dataset has required fields
+            sample = train_recs[0] if train_recs else {}
+            has_chosen = any(r.get("chosen", "").strip() for r in train_recs[:10])
+            has_rejected = any(r.get("rejected", "").strip() for r in train_recs[:10])
+            if not has_chosen or not has_rejected:
+                raise ValueError(
+                    f"{config.training_type.upper()} training requires a dataset with "
+                    f"'chosen' and 'rejected' fields, but the loaded dataset appears to be "
+                    f"SFT format (fields: {list(sample.keys())}). "
+                    f"Please use a preference dataset or switch training type to SFT."
+                )
             train_formatted = [
                 {"prompt": r.get("prompt", ""), "chosen": r.get("chosen", ""), "rejected": r.get("rejected", "")}
                 for r in train_recs
+                if r.get("chosen", "").strip() and r.get("rejected", "").strip()
             ]
             eval_formatted = [
                 {"prompt": r.get("prompt", ""), "chosen": r.get("chosen", ""), "rejected": r.get("rejected", "")}
                 for r in eval_recs
+                if r.get("chosen", "").strip() and r.get("rejected", "").strip()
             ] if eval_recs else None
 
         train_ds = HFDataset.from_list(train_formatted)
@@ -586,6 +599,22 @@ class TrainingOrchestrator:
         else:
             # DPO / ORPO：训练循环在 rl_trainers.py 中自定义，
             # 通过 monkey-patch 打印钩子注入指标
+
+            # Fix: mlx_tune passes float token IDs to embedding layer — cast to int32
+            try:
+                import mlx.core as mx
+                import mlx_tune.losses as _losses_mod
+                _orig_log_probs = _losses_mod.compute_log_probs_with_lengths
+
+                def _patched_log_probs(model, input_ids, lengths):
+                    import mlx.core as _mx
+                    if hasattr(input_ids, 'dtype') and input_ids.dtype != _mx.int32:
+                        input_ids = input_ids.astype(_mx.int32)
+                    return _orig_log_probs(model, input_ids, lengths)
+
+                _losses_mod.compute_log_probs_with_lengths = _patched_log_probs
+            except Exception:
+                pass
             import builtins
             _orig_print = builtins.print
             step_buf: dict = {"step": 0, "loss": None}
