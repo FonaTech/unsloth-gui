@@ -845,7 +845,8 @@ class TrainingOrchestrator:
                     actual_iters = round_steps
 
                 if backend == "mlx":
-                    self._run_mlx_training(config, model, trainer)
+                    self._run_mlx_training(config, model, trainer,
+                                           step_offset=global_step)
                 else:
                     trainer.train()
 
@@ -917,10 +918,18 @@ class TrainingOrchestrator:
 
     # ── MLX training ──────────────────────────────────────────────
 
-    def _run_mlx_training(self, config: TrainingConfig, model, trainer):
+    def _run_mlx_training(self, config: TrainingConfig, model, trainer,
+                          step_offset: int = 0):
         """
         执行 MLX 训练，通过 monkey-patch 将指标回调注入 mlx_lm 训练循环。
         DPO/ORPO 采用自定义子类覆写训练循环。
+
+        ``step_offset`` is added to the round-local step before emitting the
+        metrics event and the log line, so a dynamic rolling loop that
+        rebuilds the trainer each round still produces a monotonically
+        increasing UI step axis (otherwise each round restarts from 1).
+        The learning-rate cosine formula continues to use the round-local
+        step because mlx_tune spins up a fresh optimiser+schedule per round.
         """
         monitor = self.monitor
         stop_event = self._stop_event
@@ -1037,8 +1046,18 @@ class TrainingOrchestrator:
             except Exception:
                 pass
             import builtins
+            import math as _math
             _orig_print = builtins.print
             step_buf: dict = {"step": 0, "loss": None}
+            # mlx_tune.rl_trainers._train_native uses:
+            #   lr_schedule = optim.cosine_decay(self.learning_rate, self.iters)
+            # Closure over base_lr + iters so we can reconstruct the lr that
+            # the optimiser actually used at each logged step (mlx_tune's
+            # print only carries "Step N/M | Loss: X | batch_size: B",
+            # so lr must be computed, not parsed).
+            _base_lr = float(getattr(config, "learning_rate", 0.0) or 0.0)
+            _iters_closure = int(getattr(trainer, "iters", 0) or 0)
+            _offset = int(step_offset or 0)
 
             def _capturing_print(*args, **kwargs):
                 _orig_print(*args, **kwargs)
@@ -1050,19 +1069,37 @@ class TrainingOrchestrator:
                         step_part = parts[0].strip()   # "Step 10/100"
                         loss_part = parts[1].strip()   # "Loss: 0.6789"
                         step_num = int(step_part.split("/")[0].replace("Step", "").strip())
+                        # Prefer the authoritative "/M" from the print itself;
+                        # fall back to closure if parsing fails.
+                        try:
+                            total_here = int(step_part.split("/")[1].strip())
+                        except Exception:
+                            total_here = _iters_closure
                         loss_val = float(loss_part.split(":")[1].strip())
-                        step_buf["step"] = step_num
+                        # Cosine decay uses the ROUND-LOCAL step because
+                        # mlx_tune builds a fresh optimiser + schedule per
+                        # round, starting from step 0 each time.
+                        lr_val = None
+                        if _base_lr > 0 and total_here > 0:
+                            k = max(0, min(total_here, step_num - 1))
+                            lr_val = _base_lr * 0.5 * (1.0 + _math.cos(_math.pi * k / total_here))
+                        # UI step is absolute (round-local + outer offset),
+                        # so the step axis keeps climbing across rounds.
+                        abs_step = step_num + _offset
+                        step_buf["step"] = abs_step
                         step_buf["loss"] = loss_val
                         monitor.put({
                             "type": "metrics",
-                            "step": step_num,
+                            "step": abs_step,
                             "loss": loss_val,
-                            "learning_rate": None,
+                            "learning_rate": lr_val,
                             "epoch": None,
                             "speed": None,
                             "gpu_mem_gb": None,
                         })
-                        monitor.put({"type": "log", "line": f"[step {step_num}] loss={loss_val:.5g}"})
+                        lr_str = f" | lr={lr_val:.3e}" if lr_val is not None else ""
+                        monitor.put({"type": "log",
+                                     "line": f"[step {abs_step}] loss={loss_val:.5g}{lr_str}"})
                     except Exception:
                         pass
 
